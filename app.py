@@ -210,7 +210,8 @@ def get_counts(camera_id):
         from forecaster import DynamicFootfallForecaster
         import random
         weight = DynamicFootfallForecaster._diurnal_weight(now_dt.hour, now_dt.minute)
-        rng = random.Random(f"live_count_{now_dt.strftime('%Y-%m-%d_%H:%M')}")
+        slot_str = now_dt.strftime("%Y-%m-%d_%H:%M")
+        rng = random.Random("live_count_" + slot_str)
         counts["Man"] = max(1, int(round(weight * 18 + rng.randint(2, 6))))
         counts["Woman"] = max(1, int(round(weight * 20 + rng.randint(2, 6))))
         counts["Kids"] = rng.randint(0, 3) if weight > 0.3 else rng.randint(0, 1)
