@@ -169,7 +169,36 @@ def set_line(camera_id):
 def detect(camera_id):
     stats = latest_camera_stats.get(camera_id)
     if not stats:
-        return jsonify({"counts": {}, "detections": [], "video_time": "00:00:00", "video_date": "", "fps": 25, "latency": 20})
+        frame_data = stream_manager.get_frame(camera_id)
+        if frame_data:
+            frame, filepath, msec = frame_data
+            lines = camera_lines.get(camera_id, [])
+            result = run_inference(frame, camera_id, lines)
+            now_time = datetime.datetime.now().time()
+            now_date = datetime.date.today()
+            raw_counts = result.get("counts", {})
+            flat_counts = raw_counts.get("camera_view", raw_counts)
+
+            stats = {
+                "counts": flat_counts,
+                "detections": result.get("detections", []),
+                "latency": 20,
+                "fps": 25,
+                "video_time": now_time.strftime("%H:%M:%S"),
+                "video_date": now_date.strftime("%Y-%m-%d")
+            }
+            latest_camera_stats[camera_id] = stats
+        else:
+            now_time = datetime.datetime.now().time()
+            now_date = datetime.date.today()
+            stats = {
+                "counts": {"Man": 0, "Woman": 0, "Kids": 0, "Senior Citizen": 0},
+                "detections": [],
+                "video_time": now_time.strftime("%H:%M:%S"),
+                "video_date": now_date.strftime("%Y-%m-%d"),
+                "fps": 25,
+                "latency": 20
+            }
     return jsonify(stats)
 
 @app.route("/counts/<camera_id>")
