@@ -22,7 +22,17 @@ backend_image = (
         "python-dotenv",
         "requests"
     )
-    .add_local_dir(".", remote_path="/root/backend")
+    .add_local_dir(
+        ".",
+        remote_path="/root/backend",
+        ignore=[
+            ".git",
+            "__pycache__",
+            "*.pyc",
+            "my_model/train",
+            "*.db"
+        ]
+    )
 )
 
 @app.function(
