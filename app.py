@@ -198,12 +198,15 @@ def get_counts(camera_id):
         if p_type in counts:
             counts[p_type] = count
 
-    # If SQL DB has 0 counts (e.g. initial cloud load), check in-memory stats
+    # Merge live in-memory counts from active video stream
     stats = latest_camera_stats.get(camera_id, {})
-    in_memory_counts = stats.get("counts", {}).get("camera_view", {})
-    if sum(counts.values()) == 0 and isinstance(in_memory_counts, dict) and sum(in_memory_counts.values()) > 0:
-        for k in counts:
-            counts[k] = in_memory_counts.get(k, 0)
+    raw_counts = stats.get("counts", {})
+    if isinstance(raw_counts, dict):
+        in_mem = raw_counts.get("camera_view", raw_counts)
+        if isinstance(in_mem, dict) and len(in_mem) > 0:
+            for k in counts:
+                if k in in_mem:
+                    counts[k] = max(counts[k], in_mem[k])
 
     # Fallback to realistic active diurnal slot baseline if counts are 0
     if sum(counts.values()) == 0:
