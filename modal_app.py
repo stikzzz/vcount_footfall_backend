@@ -5,9 +5,9 @@ import modal
 # Define Modal App
 app = modal.App("vcount-footfall-backend")
 
-# Define Container Image with OpenCV and PyTorch dependencies
+# Define Container Image with OpenCV system dependencies & Python ML packages
 backend_image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.debian_slim(python_version="3.10")
     .apt_install("libgl1", "libglib2.0-0", "libsm6", "libxrender1", "libxext6")
     .pip_install(
         "flask",
@@ -22,16 +22,14 @@ backend_image = (
         "python-dotenv",
         "requests"
     )
+    .add_local_dir(".", remote_path="/root/backend")
 )
 
 @app.function(
     image=backend_image,
     cpu=2.0,
     memory=2048,
-    timeout=300,
-    mounts=[
-        modal.Mount.from_local_dir(".", remote_path="/root/backend")
-    ]
+    timeout=300
 )
 @modal.wsgi_app()
 def flask_app():
