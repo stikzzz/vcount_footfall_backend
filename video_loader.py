@@ -59,6 +59,13 @@ class StreamManager:
             self.caps[camera_id] = cv2.VideoCapture(videos[0])
 
         cap = self.caps[camera_id]
+
+        import time
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames > 0:
+            target_frame = int((time.time() * 25) % total_frames)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+
         ret, frame = cap.read()
 
         # If video reaches end -> seek back to frame 0 seamlessly for infinite loop!
