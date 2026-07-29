@@ -28,9 +28,11 @@ class VideoManager:
             self.camera_map = {"AVENUE_FEED": [os.path.abspath(target_path)]}
         else:
             found = []
-            for f in os.listdir(workspace_root):
-                if f.lower().endswith(VIDEO_EXTENSIONS):
-                    found.append(os.path.join(workspace_root, f))
+            for d in [backend_dir, workspace_root]:
+                if os.path.exists(d):
+                    for f in os.listdir(d):
+                        if f.lower().endswith(VIDEO_EXTENSIONS):
+                            found.append(os.path.join(d, f))
             if found:
                 self.camera_map = {"AVENUE_FEED": sorted(found)}
                 print(f"🔍 [VideoManager] Fallback video found: {self.camera_map['AVENUE_FEED']}", flush=True)
