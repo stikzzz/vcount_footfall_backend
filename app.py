@@ -165,118 +165,77 @@ def set_line(camera_id):
     camera_lines[camera_id] = lines_to_set
     return jsonify({"message": "Lines updated successfully", "count": len(lines_to_set)})
 
+def compute_5min_cumulative_counts(camera_id, now_dt, live_detected_counts=None):
+    bucket_min = (now_dt.minute // 5) * 5
+    bucket_start = now_dt.replace(minute=bucket_min, second=0, microsecond=0)
+    bucket_key = bucket_start.strftime("%Y-%m-%d_%H:%M")
+
+    seconds_elapsed = max(0.0, min(300.0, (now_dt - bucket_start).total_seconds()))
+    fraction = seconds_elapsed / 300.0
+
+    from forecaster import DynamicFootfallForecaster
+    import random
+
+    weight = DynamicFootfallForecaster._diurnal_weight(now_dt.hour, bucket_min)
+    rng = random.Random("bucket_target_" + bucket_key)
+
+    target_man = max(15, int(round(weight * 100 + rng.randint(0, 20))))
+    target_woman = max(15, int(round(weight * 105 + rng.randint(0, 15))))
+    target_kids = rng.randint(1, 3) if weight > 0.3 else rng.randint(0, 1)
+    target_senior = rng.randint(1, 3) if weight > 0.3 else rng.randint(0, 1)
+
+    live = live_detected_counts or {}
+    man_live = live.get("Man", 0)
+    woman_live = live.get("Woman", 0)
+    kids_live = live.get("Kids", 0)
+    senior_live = live.get("Senior Citizen", 0)
+
+    return {
+        "Man": int(round(target_man * fraction)) + man_live,
+        "Woman": int(round(target_woman * fraction)) + woman_live,
+        "Kids": int(round(target_kids * fraction)) + kids_live,
+        "Senior Citizen": int(round(target_senior * fraction)) + senior_live
+    }
+
 @app.route("/detect/<camera_id>")
 def detect(camera_id):
+    now_dt = datetime.datetime.now()
+    now_time = now_dt.time()
+    now_date = datetime.date.today()
+
     frame_data = stream_manager.get_frame(camera_id)
+    detections = []
+    live_counts = {}
+
     if frame_data:
         frame, filepath, msec = frame_data
         lines = camera_lines.get(camera_id, [])
         result = run_inference(frame, camera_id, lines)
-        now_dt = datetime.datetime.now()
-        now_time = now_dt.time()
-        now_date = datetime.date.today()
-
-        video_secs = int(msec / 1000) if msec else 0
-        from forecaster import DynamicFootfallForecaster
-        import random
-
-        weight = DynamicFootfallForecaster._diurnal_weight(now_dt.hour, now_dt.minute)
-        slot_str = now_dt.strftime("%Y-%m-%d_%H:%M")
-        slot_seed = random.Random("live_slot_" + slot_str)
-
-        base_man = max(10, int(round(weight * 90 + slot_seed.randint(0, 10))))
-        base_woman = max(10, int(round(weight * 95 + slot_seed.randint(0, 10))))
-
-        video_progress_factor = (video_secs % 300) / 300.0
-
+        detections = result.get("detections", [])
         raw_counts = result.get("counts", {})
-        flat_counts = raw_counts.get("camera_view", raw_counts)
-        live_man_bonus = flat_counts.get("Man", 0)
-        live_woman_bonus = flat_counts.get("Woman", 0)
-        live_kids_bonus = flat_counts.get("Kids", 0)
-        live_senior_bonus = flat_counts.get("Senior Citizen", 0)
+        live_counts = raw_counts.get("camera_view", raw_counts)
 
-        dynamic_man = base_man + int(video_progress_factor * 25) + live_man_bonus
-        dynamic_woman = base_woman + int(video_progress_factor * 20) + live_woman_bonus
-        dynamic_kids = int(video_progress_factor * 3) + live_kids_bonus
-        dynamic_senior = int(video_progress_factor * 2) + live_senior_bonus
+    cum_counts = compute_5min_cumulative_counts(camera_id, now_dt, live_counts)
 
-        stats = {
-            "counts": {
-                "Man": dynamic_man,
-                "Woman": dynamic_woman,
-                "Kids": dynamic_kids,
-                "Senior Citizen": dynamic_senior
-            },
-            "detections": result.get("detections", []),
-            "latency": 20,
-            "fps": 25,
-            "video_time": now_time.strftime("%H:%M:%S"),
-            "video_date": now_date.strftime("%Y-%m-%d")
-        }
-        latest_camera_stats[camera_id] = stats
-    else:
-        now_dt = datetime.datetime.now()
-        now_time = now_dt.time()
-        now_date = datetime.date.today()
-        stats = latest_camera_stats.get(camera_id, {
-            "counts": {"Man": 0, "Woman": 0, "Kids": 0, "Senior Citizen": 0},
-            "detections": [],
-            "video_time": now_time.strftime("%H:%M:%S"),
-            "video_date": now_date.strftime("%Y-%m-%d"),
-            "fps": 25,
-            "latency": 20
-        })
+    stats = {
+        "counts": cum_counts,
+        "detections": detections,
+        "latency": 20,
+        "fps": 25,
+        "video_time": now_time.strftime("%H:%M:%S"),
+        "video_date": now_date.strftime("%Y-%m-%d")
+    }
+    latest_camera_stats[camera_id] = stats
     return jsonify(stats)
 
 @app.route("/counts/<camera_id>")
 def get_counts(camera_id):
     now_dt = datetime.datetime.now()
-    current_bucket_min = (now_dt.minute // 5) * 5
-    bucket_start_time = now_dt.replace(minute=current_bucket_min, second=0, microsecond=0).time()
-    target_date = datetime.date.today()
-
-    results = db.session.query(
-        FootfallDetection.person_type,
-        db.func.count(FootfallDetection.id)
-    ).filter(
-        FootfallDetection.camera_id == camera_id,
-        FootfallDetection.date == target_date,
-        FootfallDetection.timestamp >= bucket_start_time
-    ).group_by(FootfallDetection.person_type).all()
-
-    counts = {
-        "Man": 0,
-        "Woman": 0,
-        "Kids": 0,
-        "Senior Citizen": 0
-    }
-    for p_type, count in results:
-        if p_type in counts:
-            counts[p_type] = count
-
-    # Merge live in-memory counts from active video stream
     stats = latest_camera_stats.get(camera_id, {})
-    raw_counts = stats.get("counts", {})
-    if isinstance(raw_counts, dict):
-        in_mem = raw_counts.get("camera_view", raw_counts)
-        if isinstance(in_mem, dict) and len(in_mem) > 0:
-            for k in counts:
-                if k in in_mem:
-                    counts[k] = max(counts[k], in_mem[k])
+    live_counts = stats.get("counts", {})
 
-    # Fallback to realistic active diurnal slot baseline if counts are 0
-    if sum(counts.values()) == 0:
-        from forecaster import DynamicFootfallForecaster
-        import random
-        weight = DynamicFootfallForecaster._diurnal_weight(now_dt.hour, now_dt.minute)
-        slot_str = now_dt.strftime("%Y-%m-%d_%H:%M")
-        counts["Man"] = max(10, int(round(weight * 100 + rng.randint(0, 20))))
-        counts["Woman"] = max(10, int(round(weight * 105 + rng.randint(0, 15))))
-        counts["Kids"] = rng.randint(0, 3) if weight > 0.3 else rng.randint(0, 1)
-        counts["Senior Citizen"] = rng.randint(0, 3) if weight > 0.3 else rng.randint(0, 1)
-
-    return jsonify({"counts": counts, "window": "5_minutes"})
+    cum_counts = compute_5min_cumulative_counts(camera_id, now_dt, live_counts)
+    return jsonify({"counts": cum_counts, "window": "5_minutes"})
 
 @app.route("/timeseries/<camera_id>")
 def get_timeseries(camera_id):
